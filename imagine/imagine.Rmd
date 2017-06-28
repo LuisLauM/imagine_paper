@@ -1,0 +1,276 @@
+---
+title: "imagine: IMAGing engINE, Tools for Application of Image Filters to Data Matrices"
+author:
+  - name: Wencheng Lau-Medrano
+    affiliation: Instituto del Mar del Perú
+    address:
+    - Esquina Gamarra y General Valle s/n, Chucuito, Callao-Perú
+    - +51 (1)208-8650
+    email:  llau@imarpe.gob.pe
+  - name: Ricardo Oliveros-Ramos
+    affiliation: Facultad de Ciencias y Filosofia, Universidad Peruana Cayetano Heredia
+    address:
+    - +51 (1)319-0000
+    - Av. Honorio Delgado 430 Urb. Ingeniería S.M.P Lima 31, Perú
+    email:  ricardo.oliveros@gmail.com
+abstract: >
+  An abstract of less than 150 words.
+preamble: >
+  % Any extra latex you need in the preamble
+bibliography: RJreferences.bib
+output: rticles::rjournal_article
+fig_caption: yes
+
+---
+
+```{r functions, include=FALSE}
+fig = local({
+  i = 0
+  ref = list()
+  list(
+    cap = function(refName, text) {
+      i <<- i + 1
+      ref[[refName]] <<- i
+      if(output == "word") lab = paste("Figure ", i, ": ", text, sep="")
+      if(output != "word") lab = paste(text, sep="")
+      return(lab)
+    },
+    ref = function(refName) {
+      return(ref[[refName]])
+    })
+})
+
+```
+
+```{r results='hide', message=FALSE, warning=FALSE, echo=FALSE}
+require(oXim)
+output = "pdf"
+```
+
+# Introduction
+
+Biomass estimation is one of the main goals in fishery assessment and it has made possible that several methodologies have been developed, including the acoustic approach. The acousticians can explore the water column using devices called echo sounders (part of the group of SONAR, SOund Navigation And Ranging) which generates a sound beam into the water and quantifies the intensity of the echo and the position (latitude, longitude, depth and time) of objects or phenomena that produced it (the echo). Typically, the energy reflected (echo) is displayed in echograms, which can be defined as graphs where the Y axis shows the depth from top to bottom, while the X axis indicates time. At each point, the echo intensity will vary according to a color scale, so the echograms can be analyzed as images. Figure 1 shows a typical echogram of anchoveta (*Engraulis ringens*).
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=1.0\linewidth]{exEchogram}
+  \caption{Example of echogram in Peruvian survey (IMARPE).}
+\end{figure}
+
+
+Commonly, an echo sounder emits approximately one acoustic pulse per second, so the amount of information obtained is quite high. Moreover, because an echogram is basically a large matrix of reflected echo data, computational tools for analysis must be specially developed to handle big-matrix operations. There are sotfwares (e.g. Echoview®), which allows to apply methods for removing noise, identifying species, and calculating borders in echograms; however, most of this software is not open source and its application depends largely on the criterion of each user, so that the level of subjectivity in the results is quite high. On the other hand, the Institute for Development Research (IRD, L'Institut de Recherche pour le Développement) developed a set of functions for reading and analysis of acoustic information (called Echopen), which is written in Matlab and available on the web [http://www.france-nord.ird.fr/les-ressources/outils-informatiques].
+
+<!-- An important work was done in 2010 by @bertrand2010acoustic, he established a proxy of the limit of oxycline (depth where the concentration of dissolved oxygen drops steeply) using acoustic information (echograms) of research surveys which were conducted by the Instituto del Mar del Peru in 2008 and 2005. From this echograms, Bertrand defined the depth of oxycline as the point where the cumulative sum of echoes from the water surface reached 98% of the total (from here, we call it as Line 98 criteria) [@bertrand2010acoustic]. This work was built in Matlab (regardless Echopen) and required a manually phase to indicate upper and lower limits in which the sum of echo values were performed. That is, for application of Line 98 criteria, it was necessary to define, by a series of clicks, the limit of depths where potentially oxycline limit will be found. The lack of an automatized method for this part brings two main problems: 1. It makes difficult to apply Bertrand methodology to several surveys due to the large amount of information handled by the echograms and 2. the results may not be entirely reproducible since they depend on the person who set the upper and lower limits. -->
+
+The `oXim` package in order to improve the estimation of the oxycline limit from echogram information using 2D median-filter and 2D convolutions tools. This work describes the methodology used in the analysis of echograms and the structure of input and output data. Also, a comparison between outputs from the Line 98 and `oXim` package was shown.
+
+<!-- ## Software, Echoview, Echopen -->
+<!-- ## Arnaud paper: How to calculate de oxycline? Linea98 -->
+<!-- ## Problem: Manual method -->
+
+# Image filtering
+An echogram is a matrix of numbers in which each value represents a different level of intensity of scattered energy (echo). As represented in an image, each cell in the matrix is displayed in a different color, according to the palette predefinition. There are a lot of methodologies for image filtering, some of them are focused on applying local mask to get values from a big matrix: median-filter and 2D-convolution However, these methodologies require a high computational capacity, which cannot be provided by R. The `imagine` package performs some useful functions written in Rcpp (C++) so as to facilitate the execution of pre-processing filters. `oXim` allows to change some parameters for filtering routines using an easily format (a table, `data.frame` object). As before,`oXim` uses two image-filtering methodologies: 
+
+- **Median filter** can be defined as a technique which returns the median value of the neighborhood for each cell of a matrix. Let $X$ a matrix with dimensions $n \times m$. Median filter will going to build a mini matrix (neighborhood) of $p \times q$ dimensions (size defined by user) using each cell as center of this neighborhood. Then median filter will replace values of each cell with the median of their own neighborhood cells. 
+
+- **2D convolutions** can be defined as operations applied on the matrix of image data using arrays called kernels, which are small matrices (usually 2x2, 3x3, etc.) that will be useful as local weighting way for the operation which is running.
+
+As default, `oXim` uses a $3\times3$ kernel as follows:
+
+$$\mathbf{X_{[3\times3]}} = \left[\begin{array}
+{rrr}
+1 & 0 & 1 \\
+0 & 1 & 0 \\
+1 & 0 & 1
+\end{array}\right]
+$$
+
+The selection of kernel was based on an empirical approach, weighting up pixels on diagonals for getting better results. This kernel can be changed by user only in size, according to the echogram that will be analyzed. For instance, if the user considers that the echogram will need a kernel of $5\times5$, he must change the value of parameter `radius` in the filter-settings object to 5. For now, user can only change the size not the weight.
+
+
+## Oxycline interpolation
+
+Plot method for `oxyclineData` uses an IDW (Inverse Distance Weighting) methodology for make a simple interpolation of oxycline limits gotten by `getOxyrange` function. For this purpose, `oXim` made use of `idw` function from `gstat` package. Of course, there are another methods for make interpolations (e.g. Kriging), however IDW was selected due to its simplicity and fast calculation. The application is made as follows:
+```{r, eval=FALSE}
+idw(formula = z ~ 1, locations = myData, newdata = myGrid, ...)
+```
+
+    
+# Installation and functions
+
+## Instalation
+`oXim` is available on CRAN, so the installation can be execute typying:
+
+```{r, eval=FALSE}
+install.packages("oXim")
+library(oXim)
+```
+
+It is also available in a **Github** repository (https://github.com/LuisLauM/oXim)
+
+
+## Functions
+In order to make simple the process for read echogram data and calculate de oxycline limits, `oXim` package performs two principal functions will be detailed below: 
+
+- **`readEchograms`** is oriented to read Echopen outputs (as .m files) in order to prepare for oxycline limit detection. It returns an object of class `echoData`. It has seven arguments, detailed as follows:
+
+    + fileMode: A list with needed variables to read single echogram information. The structure of this list must include the following elements: `fish38_file` (directory for fish38 file), `blue38_file` (directory for blue38 file) and `fluid120_file` (directory for fluid120 file).
+    
+    + directoryMode: A list giving variables to read several echograms. The structure of this list must include the following elements:  `directory` (folder where the files are storaged), `fish38_pattern` (text pattern for recognizing fish38 files), `blue38_pattern` (text pattern for recognizing blue38 files) and `fluid120_pattern` (text pattern for recognizing fluid120 files).
+    
+    + validFish38: Range of valid values for fish38 data. As default it will take echo values from -100 to -21.
+    
+    + validBlue38: Range of valid values for blue38 data. As default it will take echo values from -100 to -56
+    
+    + upLimitFluid120: Upper limit for fluid120 data. As default it will take the echo value -53.
+    
+    + pinInterval: Time threshold (in secs) to separate two matrices (echograms).
+    
+    + date.format: Date format of echograms in .m files.
+
+- **`getOxyrange`** takes an `echoData` object and applies the image filters to get oxycline limits. This function returns an object of class `oxyclineData`. It has three arguments, detailed as follows:
+
+    + fluidMatrix: Object of class `echoData` with information of echograms.
+    
+    + filterSettings: Table (`data.frame`) which includes information about the filters that will be applied. As default `oXim` will use the configuration of defaul-profile given on `defaultFilterSettings` data.
+    
+    + stepBYstep: Logical argument. If `TRUE`, the output will storage all matrices obtained from the application of filters, one by one. Otherwise, the output will only save the original and the final matrices.
+
+
+There are two extra functions, developed for plotting and checking echogram information:
+
+- **`echogramPlot`** takes and makes a pretty plot of an echogram matrix. Input data must be a matrix with row names as depth and column names as time. `echogramPlot` will use this names for make a plot, so the user must check this information before the application. In addition, `echogramPlot` can be used as a method for `echoData` and `oxyclineData` classes. Particularly for `oxyclineData` objects, users can show the oxycline limit line over the echogram, as it is shown in Figure 2.
+
+```{r, message=FALSE, fig.height=4, fig.width=5.7, fig.cap = fig$cap("echogramEx2", "Echogram example"), results='hide', fig.pos="h", fig.cap="echogramPlot function applied to an oxyclineData object, showing the limit lines of oxycline.", echo=FALSE}
+
+fileMode <- list(fish38_file   = system.file("extdata", "fish38.mat", package = "oXim"),
+                 fluid120_file = system.file("extdata", "fluid120.mat", package = "oXim"),
+                 blue38_file   = system.file("extdata", "blue38.mat", package = "oXim"))
+
+echoData <- readEchograms(fileMode = fileMode)
+
+oxyLines <- getOxyrange(fluidMatrix = echoData)
+
+echogramPlot(oxyLines)
+
+```
+
+- **`createFilterSetting`** gives a simple way to create a configuration table for image filter applying.
+
+
+## Classes and methods
+`oXim` creates two classes: 
+
+- **`echoData`** is defined for storing acoustic information taked from Echopen outputs. The structure for this class is:
+    + info: Number of echograms and parameters of file paths of outputs of Echopen.
+    + data: Original data, read from Echopen outputs.
+
+- **`oxyclineData`** has the depth limits of oxycline for each acoustic ping. The structure for this class is:
+    + info: Number of echograms, range of date, range for oxycline depth, filter-settings table used.
+    + dims: Dimensions of each echogram.
+    + outputs: Matrices results of applying the filters to echograms.
+    + oxycline_range: `data.frame` with date-time, longitude, latitude and depth limits of oxycline.
+    
+For each of the classes, four principal methods were developed: print, summary, print.summary, plot and echogramPlot. Results section shows and example of the methods.
+
+
+# Line 98 and `oXim` outputs comparison
+
+You will the see the results for the Line98 software applied to two output examples from the IMARPE's Acoustic Survey Cr. 1110-12:
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=1.0\linewidth]{echoEx1}
+  \caption{Example of echogram in Peruvian survey (IMARPE).}
+\end{figure}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=1.0\linewidth]{echoEx2}
+  \caption{Example of echogram in Peruvian survey (IMARPE).}
+\end{figure}
+
+
+
+En la Figura 3 se muestran las salidas de ambas herramientas en donde se puede observar que la correspondencia no es muy alejada, lo que también se refleja en los resultados de las diferencias expuestos en la Tabla 1.
+
+<!-- Tabla1: Tabla con las diferencias entre las salidas de ambos métodos -->
+
+
+En cuanto a los tiempos de estimación, el paquete de funciones de Línea 98 en Matlab requirió 3 minutos mientras que `oXim` culminó el proceso en 15 segundos. Esto, añadido al análisis de las diferencias entre las salidas, demostró que `oXim` es una herramienta rápida y confiable para la estimación de los límites de la oxiclina en base a información acústica.
+
+
+
+
+<!-- `getOxyrange` implements a sub-function (`.noiselessFilter`) which allows to use not only percentile-50 value to make the replacing (medain filter) but also others values so by `tolerance` parameter. Thereby, `tolerance = 0` will use first value (minimum) to make the replacing, `tolerance = 1` will use the maximum, `tolerance = 0.5` the median and so on. `radius` parameter will be use to indicate size of neighborhood (it will be an square neighborhood $radius \times radius$). Finally, with `times` parameter, user may indicate how many times the filter will be applied. -->
+
+<!-- ## Description of the algorithm for image processing -->
+<!-- ## Computational implementation, classes and methods, main funtion, arguments -->
+
+<!-- # Results -->
+
+<!-- ## Read data from Echopen outputs -->
+<!-- For reading data, it is necessary to specify Echopen outputs files (.m extension). -->
+
+<!-- ```{r, cache=TRUE, message=FALSE} -->
+
+<!-- # Set directories where the Echopen's outputs are located -->
+<!-- fileMode <- list(fish38_file   = system.file("extdata", "fish38.mat", package = "oXim"), -->
+<!--                  fluid120_file = system.file("extdata", "fluid120.mat", package = "oXim"), -->
+<!--                  blue38_file   = system.file("extdata", "blue38.mat", package = "oXim")) -->
+
+<!-- # Read echograms (echoData object) -->
+<!-- echoData <- readEchograms(fileMode = fileMode) -->
+
+<!-- ``` -->
+
+<!-- ## Methods for `echoData` objects -->
+<!-- Once the files have been read, output object will be of class `echoData` what means there are methods oriented to show main information (print), make a summary of data inside echograms (summary) and visualize the echograms as an image (plot). Then, methods for `echoData` objects are shown: -->
+
+<!-- ```{r} -->
+<!-- # Print method -->
+<!-- print(echoData) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- # Print method -->
+<!-- summary(echoData) -->
+<!-- ``` -->
+
+<!-- ```{r, message=FALSE, fig.height=4, fig.width=5.7, fig.cap = fig$cap("echogramEx2", "Echogram example"), results='hide', fig.pos="h"} -->
+<!-- # Plot method -->
+<!-- plot(echoData, cex.axis = 0.8) -->
+<!-- ``` -->
+
+<!-- ## Oxycline calculation -->
+<!-- For calculate oxycline depth limits from `echoData` objects, `getOxyrange` should be applied as follows: -->
+
+<!-- ```{r, cache=TRUE} -->
+
+<!-- # Calculate oxycline limits (oxyclineData object) -->
+<!-- oxyLimits <- getOxyrange(fluidMatrix = echoData) -->
+
+<!-- ``` -->
+
+<!-- ## Methods for `oxyclineData` objects -->
+<!-- Likewise with `readEchograms` function, `getOxyrange` will return an object of class `oxyclineData` with their associated methods (print, summary and plot). -->
+
+<!-- ```{r} -->
+<!-- print(oxyLimits) -->
+<!-- ``` -->
+
+<!-- ```{r} -->
+<!-- summary(oxyLimits) -->
+<!-- ``` -->
+
+<!-- ```{r, echo=FALSE, message=FALSE, fig.height=5, fig.width=5, fig.cap = fig$cap("echogramEx3", "Oxycline interpolation for example echogram"), results='hide', fig.pos="h"} -->
+<!-- plot(oxyLimits, cex.axis = 0.8) -->
+<!-- ``` -->
+
+# Conclusions and perspectives
+
+- Next version (v. 1.1.0) will include a parameter for changing kernels. This possibility is still in evaluation.
+
+\pagebreak
+
+# Bibliography
